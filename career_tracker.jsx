@@ -65,9 +65,8 @@ const RULES = [
 ];
 
 const PROBLEM_STAGES = [
-  { key: "readAt", label: "R", title: "Read" },
-  { key: "practicedAt", label: "P", title: "Practice" },
-  { key: "revisedAt", label: "V", title: "Revise" },
+  { countKey: "practiceCount", dateKey: "lastPracticedAt", label: "P", title: "Practice" },
+  { countKey: "reviseCount", dateKey: "lastRevisedAt", label: "V", title: "Revise" },
 ];
 
 const PROBLEM_TOPICS = [
@@ -222,12 +221,12 @@ function normalizeProblemProgress(progress) {
       .filter(([problemId]) => validIds.has(problemId))
       .map(([problemId, problem]) => [
         problemId,
-        Object.fromEntries(
-          PROBLEM_STAGES.map((stage) => [
-            stage.key,
-            typeof problem?.[stage.key] === "string" ? problem[stage.key] : null,
-          ])
-        ),
+        {
+          practiceCount: Number.isFinite(problem?.practiceCount) ? problem.practiceCount : problem?.practicedAt ? 1 : 0,
+          reviseCount: Number.isFinite(problem?.reviseCount) ? problem.reviseCount : problem?.revisedAt ? 1 : 0,
+          lastPracticedAt: typeof problem?.lastPracticedAt === "string" ? problem.lastPracticedAt : problem?.practicedAt || null,
+          lastRevisedAt: typeof problem?.lastRevisedAt === "string" ? problem.lastRevisedAt : problem?.revisedAt || null,
+        },
       ])
   );
 }
@@ -408,11 +407,12 @@ export default function CareerTracker() {
     setData(next); persist(next);
   }
 
-  function toggleProblemStage(problemId, stageKey) {
+  function incrementProblemStage(problemId, stage) {
     const current = data.problemProgress?.[problemId] || {};
     const nextProblem = {
       ...current,
-      [stageKey]: current[stageKey] ? null : getTodayDate(),
+      [stage.countKey]: (current[stage.countKey] || 0) + 1,
+      [stage.dateKey]: getTodayDate(),
     };
     const next = markUpdated({
       ...data,
@@ -464,8 +464,8 @@ export default function CareerTracker() {
   const allProblemIds = getAllProblemIds(true);
   const problemTotals = Object.fromEntries(
     PROBLEM_STAGES.map((stage) => [
-      stage.key,
-      activeProblemIds.filter((problemId) => data.problemProgress?.[problemId]?.[stage.key]).length,
+      stage.countKey,
+      activeProblemIds.reduce((sum, problemId) => sum + (data.problemProgress?.[problemId]?.[stage.countKey] || 0), 0),
     ])
   );
   const skippedProblemCount = allProblemIds.length - activeProblemIds.length;
@@ -581,21 +581,22 @@ export default function CareerTracker() {
           <>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", marginBottom: "14px" }}>
               {PROBLEM_STAGES.map((stage) => (
-                <div key={stage.key} style={{ background: "#0d0d0d", border: "1px solid #161616", borderRadius: "6px", padding: "12px" }}>
+                <div key={stage.countKey} style={{ background: "#0d0d0d", border: "1px solid #161616", borderRadius: "6px", padding: "12px" }}>
                   <p style={{ fontSize: "9px", color: "#3a3a3a", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "7px" }}>{stage.title}</p>
-                  <p style={S.bigNum(stage.key === "revisedAt" ? phase.color : "#fff")}>{problemTotals[stage.key]}</p>
-                  <p style={{ fontSize: "9px", color: "#333", marginTop: "4px" }}>of {activeProblemIds.length}</p>
+                  <p style={S.bigNum(stage.countKey === "reviseCount" ? phase.color : "#fff")}>{problemTotals[stage.countKey]}</p>
+                  <p style={{ fontSize: "9px", color: "#333", marginTop: "4px" }}>total reps</p>
                 </div>
               ))}
             </div>
 
             <p style={{ fontSize: "10px", color: "#444", marginBottom: "14px", lineHeight: "1.7" }}>
-              {activeProblemIds.length} active problems · {skippedProblemCount} parked for later. Tap R/P/V as you read, practice, and revise.
+              {activeProblemIds.length} active problems · {skippedProblemCount} parked for later. Tap P or V each time you practice or revise.
             </p>
 
             {PROBLEM_TOPICS.map((topic, topicIndex) => {
               const topicIds = topic.problems.map(String);
-              const revisedCount = topicIds.filter((problemId) => data.problemProgress?.[problemId]?.revisedAt).length;
+              const practicedCount = topicIds.filter((problemId) => (data.problemProgress?.[problemId]?.practiceCount || 0) > 0).length;
+              const revisedCount = topicIds.filter((problemId) => (data.problemProgress?.[problemId]?.reviseCount || 0) > 0).length;
               const topicDone = !topic.skipped && revisedCount === topic.problems.length;
 
               return (
@@ -603,7 +604,7 @@ export default function CareerTracker() {
                   <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "flex-start", marginBottom: "7px" }}>
                     <div>
                       <p style={{ fontSize: "9px", color: topicDone ? phase.color : "#3a3a3a", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "4px" }}>
-                        {String(topicIndex + 1).padStart(2, "0")} · {topic.skipped ? "skipped for now" : `${revisedCount}/${topic.problems.length} revised`}
+                        {String(topicIndex + 1).padStart(2, "0")} · {topic.skipped ? "skipped for now" : `P ${practicedCount}/${topic.problems.length} · V ${revisedCount}/${topic.problems.length}`}
                       </p>
                       <p style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: "14px", fontWeight: "700", color: topicDone ? "#fff" : "#bbb" }}>{topic.name}</p>
                     </div>
@@ -615,28 +616,31 @@ export default function CareerTracker() {
                     {topic.problems.map((problemId) => {
                       const id = String(problemId);
                       const progress = data.problemProgress?.[id] || {};
-                      const completedStages = PROBLEM_STAGES.filter((stage) => progress[stage.key]).length;
+                      const practiceCount = progress.practiceCount || 0;
+                      const reviseCount = progress.reviseCount || 0;
+                      const hasProgress = practiceCount + reviseCount > 0;
 
                       return (
                         <div key={id} style={{ display: "grid", gridTemplateColumns: "54px 1fr", gap: "8px", alignItems: "center", background: "#080808", border: "1px solid #151515", borderRadius: "4px", padding: "7px" }}>
                           <div>
-                            <p style={{ fontSize: "11px", color: completedStages === 3 ? phase.color : "#777", fontWeight: "700" }}>#{id}</p>
-                            <p style={{ fontSize: "8px", color: "#333", marginTop: "2px" }}>{completedStages}/3</p>
+                            <p style={{ fontSize: "11px", color: reviseCount > 0 ? phase.color : "#777", fontWeight: "700" }}>#{id}</p>
+                            <p style={{ fontSize: "8px", color: "#333", marginTop: "2px" }}>P{practiceCount} V{reviseCount}</p>
                           </div>
                           <div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "5px" }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px" }}>
                               {PROBLEM_STAGES.map((stage) => {
-                                const active = Boolean(progress[stage.key]);
+                                const count = progress[stage.countKey] || 0;
+                                const active = count > 0;
                                 return (
-                                  <button key={stage.key} disabled={topic.skipped} title={stage.title} onClick={() => toggleProblemStage(id, stage.key)} style={{ background: active ? phase.color + "18" : "#111", border: `1px solid ${active ? phase.color + "55" : "#1f1f1f"}`, borderRadius: "4px", color: active ? phase.color : "#555", padding: "7px 0", fontSize: "9px", cursor: topic.skipped ? "default" : "pointer", fontFamily: "inherit", fontWeight: "700" }}>
-                                    {stage.label}
+                                  <button key={stage.countKey} disabled={topic.skipped} title={stage.title} onClick={() => incrementProblemStage(id, stage)} style={{ background: active ? phase.color + "18" : "#111", border: `1px solid ${active ? phase.color + "55" : "#1f1f1f"}`, borderRadius: "4px", color: active ? phase.color : "#555", padding: "7px 0", fontSize: "9px", cursor: topic.skipped ? "default" : "pointer", fontFamily: "inherit", fontWeight: "700" }}>
+                                    {stage.label} {count}
                                   </button>
                                 );
                               })}
                             </div>
-                            {completedStages > 0 && (
+                            {hasProgress && (
                               <p style={{ fontSize: "8px", color: "#333", lineHeight: "1.6", marginTop: "5px" }}>
-                                {PROBLEM_STAGES.filter((stage) => progress[stage.key]).map((stage) => `${stage.label} ${progress[stage.key]}`).join(" · ")}
+                                {PROBLEM_STAGES.filter((stage) => progress[stage.dateKey]).map((stage) => `${stage.label} ${progress[stage.dateKey]}`).join(" · ")}
                               </p>
                             )}
                           </div>
