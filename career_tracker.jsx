@@ -73,6 +73,7 @@ function initData() {
     lifetime: { ...EMPTY_COUNTS },
     lastActiveDate: null,
     streak: 0,
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -110,6 +111,7 @@ function normalizeData(value) {
     weekly: normalizeCounts(value.weekly),
     lifetime: normalizeCounts(value.lifetime),
     streak: Number.isFinite(value.streak) ? value.streak : fallback.streak,
+    updatedAt: value.updatedAt || fallback.updatedAt,
   };
 }
 
@@ -134,6 +136,14 @@ function refreshRollingDates(data) {
   return next;
 }
 
+function getDataTime(data) {
+  return new Date(data?.updatedAt || 0).getTime();
+}
+
+function markUpdated(data) {
+  return { ...data, updatedAt: new Date().toISOString() };
+}
+
 export default function CareerTracker() {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState("weekly");
@@ -143,6 +153,7 @@ export default function CareerTracker() {
   const [email, setEmail] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [syncStatus, setSyncStatus] = useState(supabase ? "local" : "local only");
+  const [syncError, setSyncError] = useState("");
 
   useEffect(() => {
     load();
@@ -163,6 +174,22 @@ export default function CareerTracker() {
     return () => subscription.subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (!supabase || !authUser) return undefined;
+
+    function syncOnFocus() {
+      if (!document.hidden) syncFromCloud(authUser, readStoredData());
+    }
+
+    window.addEventListener("focus", syncOnFocus);
+    document.addEventListener("visibilitychange", syncOnFocus);
+
+    return () => {
+      window.removeEventListener("focus", syncOnFocus);
+      document.removeEventListener("visibilitychange", syncOnFocus);
+    };
+  }, [authUser]);
+
   async function load() {
     try {
       const d = refreshRollingDates(readStoredData());
@@ -181,28 +208,36 @@ export default function CareerTracker() {
 
   async function persist(d) {
     try {
+      setSyncError("");
       saveStoredData(d);
       if (supabase && authUser) await saveCloudData(d, authUser.id);
     }
-    catch (e) { console.error("save failed", e); }
+    catch (e) {
+      console.error("save failed", e);
+      setSyncStatus("sync failed");
+      setSyncError(e.message || "Could not save to Supabase.");
+    }
   }
 
   async function syncFromCloud(user, localData) {
     try {
+      setSyncError("");
       setSyncStatus("syncing");
       const { data: row, error } = await supabase
         .from("tracker_data")
-        .select("data")
+        .select("data, updated_at")
         .eq("user_id", user.id)
         .maybeSingle();
 
       if (error) throw error;
 
       if (row?.data) {
-        const cloudData = refreshRollingDates(row.data);
-        setData(cloudData);
-        saveStoredData(cloudData);
-        await saveCloudData(cloudData, user.id);
+        const cloudData = refreshRollingDates({ ...row.data, updatedAt: row.data.updatedAt || row.updated_at });
+        const local = refreshRollingDates(localData);
+        const nextData = getDataTime(cloudData) >= getDataTime(local) ? cloudData : local;
+        setData(nextData);
+        saveStoredData(nextData);
+        await saveCloudData(nextData, user.id);
       } else {
         await saveCloudData(localData, user.id);
       }
@@ -211,17 +246,19 @@ export default function CareerTracker() {
     } catch (e) {
       console.error("sync failed", e);
       setSyncStatus("sync failed");
+      setSyncError(e.message || "Could not sync with Supabase.");
     }
   }
 
   async function saveCloudData(nextData, userId) {
     setSyncStatus("saving");
+    const dataToSave = normalizeData(nextData);
     const { error } = await supabase
       .from("tracker_data")
       .upsert({
         user_id: userId,
-        data: nextData,
-        updated_at: new Date().toISOString(),
+        data: dataToSave,
+        updated_at: dataToSave.updatedAt,
       });
 
     if (error) throw error;
@@ -263,19 +300,25 @@ export default function CareerTracker() {
       lifetime: { ...data.lifetime, [key]: data.lifetime[key] + 1 },
       lastActiveDate: today, streak,
     };
-    setData(next); persist(next);
+    const updated = markUpdated(next);
+    setData(updated); persist(updated);
     setPulse(key); setTimeout(() => setPulse(null), 500);
   }
 
   function setPhase(id) {
-    const next = { ...data, currentPhase: id };
+    const next = markUpdated({ ...data, currentPhase: id });
     setData(next); persist(next);
   }
 
   function resetWeek() {
     const today = getTodayDate();
-    const next = { ...data, weekly: { ...EMPTY_COUNTS }, weekStartDate: today };
+    const next = markUpdated({ ...data, weekly: { ...EMPTY_COUNTS }, weekStartDate: today });
     setData(next); persist(next);
+  }
+
+  function syncNow() {
+    if (!authUser) return;
+    syncFromCloud(authUser, readStoredData());
   }
 
   function exportBackup() {
@@ -497,6 +540,9 @@ export default function CareerTracker() {
               {supabase && authUser && (
                 <>
                   <p style={{ fontSize: "9px", color: "#555", lineHeight: "1.6", marginBottom: "10px" }}>{authUser.email}</p>
+                  <button onClick={syncNow} style={{ width: "100%", background: "#161616", border: "1px solid #2a2a2a", borderRadius: "4px", color: "#aaa", padding: "9px", fontSize: "9px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "8px" }}>
+                    sync now
+                  </button>
                   <button onClick={signOut} style={{ width: "100%", background: "none", border: "1px solid #252525", borderRadius: "4px", color: "#777", padding: "9px", fontSize: "9px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.15em", textTransform: "uppercase" }}>
                     sign out
                   </button>
@@ -512,6 +558,8 @@ export default function CareerTracker() {
                   {authMessage && <p style={{ fontSize: "9px", color: "#555", lineHeight: "1.6", marginTop: "8px" }}>{authMessage}</p>}
                 </form>
               )}
+
+              {syncError && <p style={{ fontSize: "9px", color: "#f59e0b", lineHeight: "1.6", marginTop: "8px" }}>{syncError}</p>}
             </div>
 
             <button onClick={exportBackup} style={{ marginTop: "12px", width: "100%", background: "none", border: "1px solid #161616", borderRadius: "4px", color: "#555", padding: "9px", fontSize: "9px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.15em", textTransform: "uppercase" }}>
