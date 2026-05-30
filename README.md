@@ -30,29 +30,34 @@ The app works locally without Supabase, but cross-device sync needs a free Supab
 2. In Supabase, open `SQL Editor` and run:
 
 ```sql
+drop table if exists public.tracker_data;
+
 create table public.tracker_data (
-  user_id uuid primary key references auth.users(id) on delete cascade,
+  id text primary key,
   data jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
 
 alter table public.tracker_data enable row level security;
 
-create policy "Users can read own tracker"
+create policy "Read shared tracker"
 on public.tracker_data
 for select
-using (auth.uid() = user_id);
+to anon
+using (id = 'career_tracker');
 
-create policy "Users can insert own tracker"
+create policy "Create shared tracker"
 on public.tracker_data
 for insert
-with check (auth.uid() = user_id);
+to anon
+with check (id = 'career_tracker');
 
-create policy "Users can update own tracker"
+create policy "Update shared tracker"
 on public.tracker_data
 for update
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
+to anon
+using (id = 'career_tracker')
+with check (id = 'career_tracker');
 ```
 
 3. In Supabase, open `Project Settings` > `API` and copy:
@@ -61,9 +66,8 @@ with check (auth.uid() = user_id);
 4. In Vercel, open the project settings and add environment variables:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
-5. In Supabase, open `Authentication` > `URL Configuration` and add your Vercel URL to the allowed redirect URLs.
-6. Redeploy the Vercel project.
+5. Redeploy the Vercel project.
 
-Use the `Cloud Sync` box in the stats tab to email yourself a login link. Use the same email on every device.
+The app uses one shared row with id `career_tracker`, so every browser/device that opens the deployed site reads and writes the same data. No email login is required.
 
 Use the `export backup` button occasionally as an extra safety net.

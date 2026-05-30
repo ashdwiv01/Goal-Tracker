@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "./src/supabaseClient";
 
 const STORAGE_KEY = "career_tracker_v1";
+const CLOUD_ROW_ID = import.meta.env.VITE_TRACKER_ID || "career_tracker";
 const EMPTY_COUNTS = { dsa: 0, concepts: 0, apps: 0, mocks: 0 };
 
 const PHASES = [
@@ -149,36 +150,18 @@ export default function CareerTracker() {
   const [tab, setTab] = useState("weekly");
   const [pulse, setPulse] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [authUser, setAuthUser] = useState(null);
-  const [email, setEmail] = useState("");
-  const [authMessage, setAuthMessage] = useState("");
   const [syncStatus, setSyncStatus] = useState(supabase ? "local" : "local only");
   const [syncError, setSyncError] = useState("");
 
   useEffect(() => {
     load();
-
-    if (!supabase) return undefined;
-
-    const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
-      const user = session?.user ?? null;
-      setAuthUser(user);
-      if (event === "SIGNED_IN" && user) {
-        syncFromCloud(user, readStoredData());
-      }
-      if (event === "SIGNED_OUT") {
-        setSyncStatus("local only");
-      }
-    });
-
-    return () => subscription.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (!supabase || !authUser) return undefined;
+    if (!supabase) return undefined;
 
     function syncOnFocus() {
-      if (!document.hidden) syncFromCloud(authUser, readStoredData());
+      if (!document.hidden) syncFromCloud(readStoredData());
     }
 
     window.addEventListener("focus", syncOnFocus);
@@ -188,7 +171,7 @@ export default function CareerTracker() {
       window.removeEventListener("focus", syncOnFocus);
       document.removeEventListener("visibilitychange", syncOnFocus);
     };
-  }, [authUser]);
+  }, []);
 
   async function load() {
     try {
@@ -197,10 +180,7 @@ export default function CareerTracker() {
       saveStoredData(d);
 
       if (supabase) {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const user = sessionData.session?.user ?? null;
-        setAuthUser(user);
-        if (user) await syncFromCloud(user, d);
+        await syncFromCloud(d);
       }
     } catch { setData(initData()); }
     setLoading(false);
@@ -210,7 +190,7 @@ export default function CareerTracker() {
     try {
       setSyncError("");
       saveStoredData(d);
-      if (supabase && authUser) await saveCloudData(d, authUser.id);
+      if (supabase) await saveCloudData(d);
     }
     catch (e) {
       console.error("save failed", e);
@@ -219,14 +199,14 @@ export default function CareerTracker() {
     }
   }
 
-  async function syncFromCloud(user, localData) {
+  async function syncFromCloud(localData) {
     try {
       setSyncError("");
       setSyncStatus("syncing");
       const { data: row, error } = await supabase
         .from("tracker_data")
         .select("data, updated_at")
-        .eq("user_id", user.id)
+        .eq("id", CLOUD_ROW_ID)
         .maybeSingle();
 
       if (error) throw error;
@@ -237,9 +217,9 @@ export default function CareerTracker() {
         const nextData = getDataTime(cloudData) >= getDataTime(local) ? cloudData : local;
         setData(nextData);
         saveStoredData(nextData);
-        await saveCloudData(nextData, user.id);
+        await saveCloudData(nextData);
       } else {
-        await saveCloudData(localData, user.id);
+        await saveCloudData(localData);
       }
 
       setSyncStatus("synced");
@@ -250,40 +230,19 @@ export default function CareerTracker() {
     }
   }
 
-  async function saveCloudData(nextData, userId) {
+  async function saveCloudData(nextData) {
     setSyncStatus("saving");
     const dataToSave = normalizeData(nextData);
     const { error } = await supabase
       .from("tracker_data")
       .upsert({
-        user_id: userId,
+        id: CLOUD_ROW_ID,
         data: dataToSave,
         updated_at: dataToSave.updatedAt,
       });
 
     if (error) throw error;
     setSyncStatus("synced");
-  }
-
-  async function signIn(event) {
-    event.preventDefault();
-    if (!supabase || !email.trim()) return;
-
-    setAuthMessage("sending login link...");
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: { emailRedirectTo: window.location.origin },
-    });
-
-    setAuthMessage(error ? error.message : "check your email for the login link");
-  }
-
-  async function signOut() {
-    if (!supabase) return;
-    await supabase.auth.signOut();
-    setAuthUser(null);
-    setSyncStatus("local only");
-    setAuthMessage("");
   }
 
   function log(key) {
@@ -317,8 +276,8 @@ export default function CareerTracker() {
   }
 
   function syncNow() {
-    if (!authUser) return;
-    syncFromCloud(authUser, readStoredData());
+    if (!supabase) return;
+    syncFromCloud(readStoredData());
   }
 
   function exportBackup() {
@@ -530,33 +489,19 @@ export default function CareerTracker() {
             <div style={{ background: "#0d0d0d", border: "1px solid #161616", borderRadius: "6px", padding: "14px", marginTop: "8px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", marginBottom: "10px" }}>
                 <p style={{ fontSize: "9px", color: "#3a3a3a", letterSpacing: "0.18em", textTransform: "uppercase" }}>Cloud Sync</p>
-                <span style={{ fontSize: "8px", color: authUser ? "#22c55e" : "#555", border: "1px solid #1f1f1f", borderRadius: "3px", padding: "3px 6px", textTransform: "uppercase" }}>{syncStatus}</span>
+                <span style={{ fontSize: "8px", color: syncStatus === "synced" ? "#22c55e" : "#555", border: "1px solid #1f1f1f", borderRadius: "3px", padding: "3px 6px", textTransform: "uppercase" }}>{syncStatus}</span>
               </div>
 
               {!supabase && (
                 <p style={{ fontSize: "9px", color: "#555", lineHeight: "1.6" }}>Add Supabase env vars in Vercel to enable cross-device sync.</p>
               )}
 
-              {supabase && authUser && (
+              {supabase && (
                 <>
-                  <p style={{ fontSize: "9px", color: "#555", lineHeight: "1.6", marginBottom: "10px" }}>{authUser.email}</p>
                   <button onClick={syncNow} style={{ width: "100%", background: "#161616", border: "1px solid #2a2a2a", borderRadius: "4px", color: "#aaa", padding: "9px", fontSize: "9px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "8px" }}>
                     sync now
                   </button>
-                  <button onClick={signOut} style={{ width: "100%", background: "none", border: "1px solid #252525", borderRadius: "4px", color: "#777", padding: "9px", fontSize: "9px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.15em", textTransform: "uppercase" }}>
-                    sign out
-                  </button>
                 </>
-              )}
-
-              {supabase && !authUser && (
-                <form onSubmit={signIn}>
-                  <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder="email@example.com" style={{ width: "100%", background: "#080808", border: "1px solid #252525", borderRadius: "4px", color: "#ccc", padding: "10px", fontSize: "11px", fontFamily: "inherit", marginBottom: "8px" }} />
-                  <button type="submit" style={{ width: "100%", background: "#161616", border: "1px solid #2a2a2a", borderRadius: "4px", color: "#aaa", padding: "9px", fontSize: "9px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.15em", textTransform: "uppercase" }}>
-                    email login link
-                  </button>
-                  {authMessage && <p style={{ fontSize: "9px", color: "#555", lineHeight: "1.6", marginTop: "8px" }}>{authMessage}</p>}
-                </form>
               )}
 
               {syncError && <p style={{ fontSize: "9px", color: "#f59e0b", lineHeight: "1.6", marginTop: "8px" }}>{syncError}</p>}
