@@ -64,6 +64,113 @@ const RULES = [
   ["🛑", "No Zero Day", "Even 5 minutes is non-zero. Never let 2 zeros happen back to back."],
 ];
 
+const PROBLEM_STAGES = [
+  { key: "readAt", label: "R", title: "Read" },
+  { key: "practicedAt", label: "P", title: "Practice" },
+  { key: "revisedAt", label: "V", title: "Revise" },
+];
+
+const PROBLEM_TOPICS = [
+  {
+    id: "sliding-window",
+    name: "Sliding Window",
+    keywords: "contiguous, substring, longest/shortest, at most k",
+    problems: [3, 76, 424, 567, 904, 1004],
+  },
+  {
+    id: "two-pointers",
+    name: "Two Pointers",
+    keywords: "sorted array, pair sum, left-right, move inward",
+    problems: [11, 15, 42, 125, 167, 881],
+  },
+  {
+    id: "binary-search",
+    name: "Binary Search",
+    keywords: "sorted/monotonic, first/last, search space, log n",
+    problems: [33, 34, 153, 704, 875, 1011],
+  },
+  {
+    id: "hashing-prefix-sum",
+    name: "Hashing + Prefix Sum",
+    keywords: "frequency, fast lookup, running sum, subarray count",
+    problems: [1, 49, 128, 560, 525, 974],
+  },
+  {
+    id: "monotonic-stack",
+    name: "Monotonic Stack",
+    keywords: "next greater, previous smaller, span, maintain order",
+    problems: [84, 496, 503, 739, 901, 907],
+  },
+  {
+    id: "heap-priority-queue",
+    name: "Heap / Priority Queue / Top K",
+    keywords: "top k, priority, smallest/largest, stream",
+    problems: [215, 295, 347, 378, 621, 703],
+  },
+  {
+    id: "intervals",
+    name: "Intervals",
+    keywords: "merge, overlap, meeting time, sort by start/end",
+    problems: [56, 57, 435, 452, 986, 1288],
+  },
+  {
+    id: "bfs",
+    name: "BFS",
+    keywords: "shortest path, level order, queue, neighbors",
+    problems: [102, 127, 199, 994, 1091, 752],
+  },
+  {
+    id: "dfs-backtracking",
+    name: "DFS / Backtracking",
+    keywords: "all combinations, choices, recursion, undo move",
+    problems: [39, 40, 46, 78, 79, 131],
+  },
+  {
+    id: "trees",
+    name: "Trees",
+    keywords: "subtree, depth, ancestor, recursive structure",
+    problems: [98, 104, 124, 230, 236, 543],
+  },
+  {
+    id: "linked-list",
+    name: "Linked List",
+    keywords: "pointers, reverse, merge, node manipulation",
+    problems: [19, 21, 23, 141, 143, 206],
+  },
+  {
+    id: "union-find",
+    name: "Union Find",
+    keywords: "connected components, groups, merge sets, parent",
+    problems: [547, 684, 721, 947, 990, 1319],
+    skipped: true,
+  },
+  {
+    id: "topological-sort",
+    name: "Topological Sort",
+    keywords: "dependency order, DAG, in-degree, course schedule",
+    problems: [207, 210, 310, 802, 1136, 1203],
+  },
+  {
+    id: "trie",
+    name: "Trie",
+    keywords: "prefix, dictionary, startsWith, autocomplete",
+    problems: [208, 211, 212, 648, 677, 1268],
+    skipped: true,
+  },
+  {
+    id: "greedy",
+    name: "Greedy",
+    keywords: "best local choice, maximize/minimize, jump, intervals",
+    problems: [45, 55, 134, 406, 763, 1029],
+  },
+  {
+    id: "dynamic-programming",
+    name: "Dynamic Programming",
+    keywords: "overlapping subproblems, state, transition, optimal result",
+    problems: [70, 198, 213, 300, 322, 746],
+  },
+];
+
 function initData() {
   const today = getTodayDate();
   return {
@@ -72,6 +179,7 @@ function initData() {
     weekStartDate: today,
     weekly: { ...EMPTY_COUNTS },
     lifetime: { ...EMPTY_COUNTS },
+    problemProgress: {},
     lastActiveDate: null,
     streak: 0,
     updatedAt: new Date().toISOString(),
@@ -100,6 +208,30 @@ function normalizeCounts(counts) {
   );
 }
 
+function getAllProblemIds(includeSkipped = true) {
+  return PROBLEM_TOPICS
+    .filter((topic) => includeSkipped || !topic.skipped)
+    .flatMap((topic) => topic.problems)
+    .map(String);
+}
+
+function normalizeProblemProgress(progress) {
+  const validIds = new Set(getAllProblemIds());
+  return Object.fromEntries(
+    Object.entries(progress || {})
+      .filter(([problemId]) => validIds.has(problemId))
+      .map(([problemId, problem]) => [
+        problemId,
+        Object.fromEntries(
+          PROBLEM_STAGES.map((stage) => [
+            stage.key,
+            typeof problem?.[stage.key] === "string" ? problem[stage.key] : null,
+          ])
+        ),
+      ])
+  );
+}
+
 function normalizeData(value) {
   const fallback = initData();
   if (!value || typeof value !== "object") return fallback;
@@ -111,6 +243,7 @@ function normalizeData(value) {
     currentPhase,
     weekly: normalizeCounts(value.weekly),
     lifetime: normalizeCounts(value.lifetime),
+    problemProgress: normalizeProblemProgress(value.problemProgress),
     streak: Number.isFinite(value.streak) ? value.streak : fallback.streak,
     updatedAt: value.updatedAt || fallback.updatedAt,
   };
@@ -275,6 +408,22 @@ export default function CareerTracker() {
     setData(next); persist(next);
   }
 
+  function toggleProblemStage(problemId, stageKey) {
+    const current = data.problemProgress?.[problemId] || {};
+    const nextProblem = {
+      ...current,
+      [stageKey]: current[stageKey] ? null : getTodayDate(),
+    };
+    const next = markUpdated({
+      ...data,
+      problemProgress: {
+        ...data.problemProgress,
+        [problemId]: nextProblem,
+      },
+    });
+    setData(next); persist(next);
+  }
+
   function resetAll() {
     const confirmed = window.confirm("Reset all tracker data on this device and in Supabase?");
     if (!confirmed) return;
@@ -311,6 +460,15 @@ export default function CareerTracker() {
   const loggedToday = data.lastActiveDate === today;
   const weekNum = getWeekNum(data.startDate);
   const lastUpdated = data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "not yet";
+  const activeProblemIds = getAllProblemIds(false);
+  const allProblemIds = getAllProblemIds(true);
+  const problemTotals = Object.fromEntries(
+    PROBLEM_STAGES.map((stage) => [
+      stage.key,
+      activeProblemIds.filter((problemId) => data.problemProgress?.[problemId]?.[stage.key]).length,
+    ])
+  );
+  const skippedProblemCount = allProblemIds.length - activeProblemIds.length;
 
   const S = {
     root: { background: "#080808", minHeight: "100vh", maxWidth: "460px", margin: "0 auto", fontFamily: "'IBM Plex Mono', 'Courier New', monospace", color: "#d4d4d4", paddingBottom: "40px" },
@@ -354,8 +512,8 @@ export default function CareerTracker() {
         </div>
 
         <div style={S.tabs}>
-          {[["weekly", "This Week"], ["phases", "Roadmap"], ["stats", "All-Time"]].map(([id, lbl]) => (
-            <button key={id} onClick={() => setTab(id)} style={{ background: "none", border: "none", borderBottom: tab === id ? `2px solid ${phase.color}` : "2px solid transparent", cursor: "pointer", padding: "8px 14px 7px", fontSize: "9px", fontFamily: "inherit", letterSpacing: "0.14em", textTransform: "uppercase", color: tab === id ? phase.color : "#444", marginBottom: "-1px" }}>
+          {[["weekly", "This Week"], ["dsa", "DSA"], ["phases", "Roadmap"], ["stats", "All-Time"]].map(([id, lbl]) => (
+            <button key={id} onClick={() => setTab(id)} style={{ background: "none", border: "none", borderBottom: tab === id ? `2px solid ${phase.color}` : "2px solid transparent", cursor: "pointer", padding: "8px 10px 7px", fontSize: "9px", fontFamily: "inherit", letterSpacing: "0.14em", textTransform: "uppercase", color: tab === id ? phase.color : "#444", marginBottom: "-1px" }}>
               {lbl}
             </button>
           ))}
@@ -415,6 +573,80 @@ export default function CareerTracker() {
             <button onClick={resetWeek} style={{ marginTop: "12px", width: "100%", background: "none", border: "1px solid #161616", borderRadius: "4px", color: "#2e2e2e", padding: "9px", fontSize: "9px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.15em", textTransform: "uppercase" }}>
               ↺  reset weekly counters (use on sunday)
             </button>
+          </>
+        )}
+
+        {/* DSA CHECKLIST */}
+        {tab === "dsa" && (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", marginBottom: "14px" }}>
+              {PROBLEM_STAGES.map((stage) => (
+                <div key={stage.key} style={{ background: "#0d0d0d", border: "1px solid #161616", borderRadius: "6px", padding: "12px" }}>
+                  <p style={{ fontSize: "9px", color: "#3a3a3a", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "7px" }}>{stage.title}</p>
+                  <p style={S.bigNum(stage.key === "revisedAt" ? phase.color : "#fff")}>{problemTotals[stage.key]}</p>
+                  <p style={{ fontSize: "9px", color: "#333", marginTop: "4px" }}>of {activeProblemIds.length}</p>
+                </div>
+              ))}
+            </div>
+
+            <p style={{ fontSize: "10px", color: "#444", marginBottom: "14px", lineHeight: "1.7" }}>
+              {activeProblemIds.length} active problems · {skippedProblemCount} parked for later. Tap R/P/V as you read, practice, and revise.
+            </p>
+
+            {PROBLEM_TOPICS.map((topic, topicIndex) => {
+              const topicIds = topic.problems.map(String);
+              const revisedCount = topicIds.filter((problemId) => data.problemProgress?.[problemId]?.revisedAt).length;
+              const topicDone = !topic.skipped && revisedCount === topic.problems.length;
+
+              return (
+                <div key={topic.id} style={{ ...S.card(topicDone, topicDone ? phase.color : "#252525"), opacity: topic.skipped ? 0.35 : 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "flex-start", marginBottom: "7px" }}>
+                    <div>
+                      <p style={{ fontSize: "9px", color: topicDone ? phase.color : "#3a3a3a", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "4px" }}>
+                        {String(topicIndex + 1).padStart(2, "0")} · {topic.skipped ? "skipped for now" : `${revisedCount}/${topic.problems.length} revised`}
+                      </p>
+                      <p style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: "14px", fontWeight: "700", color: topicDone ? "#fff" : "#bbb" }}>{topic.name}</p>
+                    </div>
+                  </div>
+
+                  <p style={{ fontSize: "9px", color: "#444", lineHeight: "1.6", marginBottom: "10px" }}>{topic.keywords}</p>
+
+                  <div style={{ display: "grid", gap: "7px" }}>
+                    {topic.problems.map((problemId) => {
+                      const id = String(problemId);
+                      const progress = data.problemProgress?.[id] || {};
+                      const completedStages = PROBLEM_STAGES.filter((stage) => progress[stage.key]).length;
+
+                      return (
+                        <div key={id} style={{ display: "grid", gridTemplateColumns: "54px 1fr", gap: "8px", alignItems: "center", background: "#080808", border: "1px solid #151515", borderRadius: "4px", padding: "7px" }}>
+                          <div>
+                            <p style={{ fontSize: "11px", color: completedStages === 3 ? phase.color : "#777", fontWeight: "700" }}>#{id}</p>
+                            <p style={{ fontSize: "8px", color: "#333", marginTop: "2px" }}>{completedStages}/3</p>
+                          </div>
+                          <div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "5px" }}>
+                              {PROBLEM_STAGES.map((stage) => {
+                                const active = Boolean(progress[stage.key]);
+                                return (
+                                  <button key={stage.key} disabled={topic.skipped} title={stage.title} onClick={() => toggleProblemStage(id, stage.key)} style={{ background: active ? phase.color + "18" : "#111", border: `1px solid ${active ? phase.color + "55" : "#1f1f1f"}`, borderRadius: "4px", color: active ? phase.color : "#555", padding: "7px 0", fontSize: "9px", cursor: topic.skipped ? "default" : "pointer", fontFamily: "inherit", fontWeight: "700" }}>
+                                    {stage.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {completedStages > 0 && (
+                              <p style={{ fontSize: "8px", color: "#333", lineHeight: "1.6", marginTop: "5px" }}>
+                                {PROBLEM_STAGES.filter((stage) => progress[stage.key]).map((stage) => `${stage.label} ${progress[stage.key]}`).join(" · ")}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </>
         )}
 
