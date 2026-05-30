@@ -275,6 +275,14 @@ export default function CareerTracker() {
     setData(next); persist(next);
   }
 
+  function resetAll() {
+    const confirmed = window.confirm("Reset all tracker data on this device and in Supabase?");
+    if (!confirmed) return;
+
+    const next = initData();
+    setData(next); persist(next);
+  }
+
   function syncNow() {
     if (!supabase) return;
     syncFromCloud(readStoredData());
@@ -302,6 +310,7 @@ export default function CareerTracker() {
   const today = getTodayDate();
   const loggedToday = data.lastActiveDate === today;
   const weekNum = getWeekNum(data.startDate);
+  const lastUpdated = data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "not yet";
 
   const S = {
     root: { background: "#080808", minHeight: "100vh", maxWidth: "460px", margin: "0 auto", fontFamily: "'IBM Plex Mono', 'Courier New', monospace", color: "#d4d4d4", paddingBottom: "40px" },
@@ -480,9 +489,14 @@ export default function CareerTracker() {
             </div>
 
             <div style={{ background: "#0d0d0d", border: "1px solid #161616", borderRadius: "6px", padding: "14px" }}>
+              <p style={{ fontSize: "9px", color: "#3a3a3a", letterSpacing: "0.18em", textTransform: "uppercase", marginBottom: "10px" }}>Timeline</p>
               <p style={{ fontSize: "9px", color: "#333", lineHeight: "1.8" }}>
-                Started {data.startDate} · Phase {data.currentPhase}/4 · Week {weekNum}<br />
-                Last active: {data.lastActiveDate || "not yet"} · Streak: {data.streak} days
+                Started: {data.startDate}<br />
+                Current week started: {data.weekStartDate}<br />
+                Today: {today}<br />
+                Last active: {data.lastActiveDate || "not yet"}<br />
+                Last saved: {lastUpdated}<br />
+                Phase {data.currentPhase}/4 · Week {weekNum} · Streak {data.streak} days
               </p>
             </div>
 
@@ -500,6 +514,9 @@ export default function CareerTracker() {
                 <>
                   <button onClick={syncNow} style={{ width: "100%", background: "#161616", border: "1px solid #2a2a2a", borderRadius: "4px", color: "#aaa", padding: "9px", fontSize: "9px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "8px" }}>
                     sync now
+                  </button>
+                  <button onClick={resetAll} style={{ width: "100%", background: "none", border: "1px solid #252525", borderRadius: "4px", color: "#777", padding: "9px", fontSize: "9px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.15em", textTransform: "uppercase" }}>
+                    reset all data
                   </button>
                 </>
               )}
